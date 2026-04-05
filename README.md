@@ -6,6 +6,8 @@
 
 Scans a list of Windows servers in parallel and reports every service, scheduled task, IIS application pool, and COM+ application running under a custom logon account — not LocalSystem, not NETWORK SERVICE, not any of the built-in accounts. Just the ones someone had to explicitly configure, and the ones that break when Group Policy rewrites your User Rights Assignment.
 
+[![Download](https://img.shields.io/badge/Download-Get--ServiceAccountAudit.ps1-blue?style=for-the-badge&logo=powershell)](https://raw.githubusercontent.com/GetFunctMaddMatt/PS-ServiceAccountAudit/main/Get-ServiceAccountAudit.ps1)
+
 ---
 
 ## The problem this solves
