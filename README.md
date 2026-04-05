@@ -1,6 +1,3 @@
-# PS-ServiceAccountAudit
-Audits Windows servers for services, scheduled tasks, IIS app pools, and COM+ apps running under custom logon accounts. Runs in parallel via PSExec — no WinRM required.
-
 # Get-ServiceAccountAudit
 
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue?logo=powershell)
@@ -13,9 +10,13 @@ Scans a list of Windows servers in parallel and reports every service, scheduled
 
 ## The problem this solves
 
-If you manage more than a handful of Windows servers, you've probably hit this. Group Policy pushes a "Log on as a service" or "Log on as a batch job" policy, and it wipes whatever was already there. Suddenly services are failing, scheduled tasks are throwing 0x5 Access Denied, and nobody wrote down which accounts needed those rights in the first place.
+Two scenarios come up constantly in enterprise environments.
 
-This script does the inventory first, so you're not rebuilding the list from scratch after the fact.
+The first is pre-GPO rollout. You're about to push a "Log on as a service" or "Log on as a batch job" User Rights Assignment policy and you need to know every account that has to be in it before it goes out — not after something breaks. Without a full inventory you're guessing, and GPO will wipe whatever was already on each server the moment it applies.
+
+The second is inherited environments. Not every server was built to spec. Over the years people configure services, scheduled tasks, and app pools to run under personal or shared domain accounts because it was the path of least resistance at the time. Before you can clean that up or migrate to managed service accounts, you need to know what's out there and where it is.
+
+This script gives you that list across your entire server inventory in one shot.
 
 WinRM and PowerShell Remoting also aren't always an option in older or locked-down environments. This uses PSExec so you're not fighting firewall rules or remoting configuration on every target server.
 
