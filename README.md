@@ -37,7 +37,7 @@ Anything running as `LocalSystem`, `NT AUTHORITY\*`, `NT SERVICE\*`, `NETWORK SE
 
 ## Requirements
 
-- **PsExec64.exe** from [Sysinternals](https://learn.microsoft.com/en-us/sysinternals/downloads/psexec) — place it at `C:\Temp\Tools\psexec64.exe` or update the path in the script
+- **PsExec.exe or PsExec64.exe** from [Sysinternals](https://learn.microsoft.com/en-us/sysinternals/downloads/psexec) — the script auto-detects it from common locations. If it isn't found you'll be prompted for the path. You can also pass it explicitly with `-PSExecPath`.
 - Local admin rights on each target server
 - PowerShell 3.0+ on the machine you're running this from (targets can be PS 3.0+)
 - No modules required on target servers
@@ -47,17 +47,23 @@ Anything running as `LocalSystem`, `NT AUTHORITY\*`, `NT SERVICE\*`, `NETWORK SE
 ## Usage
 
 ```powershell
-# Basic — will prompt for server list and output path
+# Basic — file picker dialogs will open for the server list and output path
 .\Get-ServiceAccountAudit.ps1
 
-# Specify everything upfront
+# Specify everything upfront — no dialogs
 .\Get-ServiceAccountAudit.ps1 -ServerListPath C:\Servers.txt -OutputCsv C:\Audit\Results.csv
+
+# Point to a specific PSExec location
+.\Get-ServiceAccountAudit.ps1 -PSExecPath "D:\Tools\PsExec64.exe" -ServerListPath C:\Servers.txt
 
 # Run more sessions at once if your network can handle it
 .\Get-ServiceAccountAudit.ps1 -ServerListPath C:\Servers.txt -ThrottleLimit 10
+
+# Use alternate credentials for PSExec and admin share access
+.\Get-ServiceAccountAudit.ps1 -ServerListPath C:\Servers.txt -Credential (Get-Credential)
 ```
 
-Server list is a plain .txt file, one server name per line.
+Server list is a plain .txt file, one server name per line. If you don't pass `-ServerListPath` or `-OutputCsv` a file picker dialog will open for each.
 
 ---
 
@@ -79,7 +85,9 @@ Every server gets at least one row. `Clean` means it was reached and nothing cam
 
 ## How it works
 
-The script builds a per-server encoded PowerShell command and launches it via PSExec using background jobs. Results are written to `C:\Windows\Temp\PSExecAudit_<servername>.txt` on each remote server, then read back over the admin share (`\\server\C$\...`) once the job completes. The temp files are deleted after collection.
+Before launching any PSExec session the script tests port 445 (SMB) on each server with a 2 second timeout. Servers that don't respond get a `Warning` row in the CSV immediately and never consume a PSExec slot. This is more reliable than ping since many servers block ICMP but SMB has to be open for PSExec to work anyway.
+
+For servers that pass the connectivity check, the script builds a per-server encoded PowerShell command and launches it via PSExec using background jobs. Results are written to `C:\Windows\Temp\PSExecAudit_<servername>.txt` on each remote server, then read back over the admin share (`\\server\C$\...`) once the job completes. The temp files are deleted after collection.
 
 This approach sidesteps PSExec's stdout buffering, which silently drops output lines when more than one result comes back through the pipe.
 
@@ -89,9 +97,11 @@ This approach sidesteps PSExec's stdout buffering, which silently drops output l
 
 | Parameter | Default | Description |
 |---|---|---|
-| `-ServerListPath` | Prompted | Path to .txt file with server names |
-| `-OutputCsv` | `C:\Temp\Backup\ServiceAccountAudit_<timestamp>.csv` | Output file path |
+| `-PSExecPath` | Auto-detected | Path to PsExec.exe or PsExec64.exe |
+| `-ServerListPath` | File picker dialog | Path to .txt file with server names |
+| `-OutputCsv` | Save dialog (timestamped filename) | Output file path |
 | `-ThrottleLimit` | `5` | Max concurrent PSExec sessions |
+| `-Credential` | Current user | Alternate credentials for PSExec and admin share access |
 
 ---
 
@@ -99,8 +109,10 @@ This approach sidesteps PSExec's stdout buffering, which silently drops output l
 
 - Read-only. Nothing is changed on any server.
 - The script does not require WinRM or PowerShell Remoting to be configured on targets.
+- Port 445 is tested before each PSExec session. Unreachable servers get a `Warning` row and are skipped — no timeout waiting on PSExec.
 - IIS app pool check requires the `WebAdministration` module on the target. If IIS is running but the module isn't installed, the server gets a `Warning` row so you know to check it manually.
 - Scheduled tasks are checked at the root `\` path only. Nested Microsoft tasks are ignored.
+- A summary is printed at the end showing total servers, how many were scanned, and how many were unreachable.
 
 ---
 
