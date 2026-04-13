@@ -4,119 +4,49 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows%20Server-lightgrey?logo=windows)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-Scans a list of Windows servers in parallel and reports every service, scheduled task, IIS application pool, and COM+ application running under a custom logon account — not LocalSystem, not NETWORK SERVICE, not any of the built-in accounts. Just the ones someone had to explicitly configure, and the ones that break when Group Policy rewrites your User Rights Assignment.
+Audits service logon accounts across your Windows server estate and exports the results to CSV.
 
 [![Download](https://img.shields.io/badge/Download-Get--ServiceAccountAudit.ps1-blue?style=for-the-badge&logo=powershell)](https://raw.githubusercontent.com/GetFunctMaddMatt/PS-ServiceAccountAudit/main/Get-ServiceAccountAudit.ps1)
 
 ---
 
-## The problem this solves
+Covers services, scheduled tasks, IIS application pools, and COM+ applications. Useful before rolling out a User Rights Assignment GPO — if an account isn't in the policy when it applies, whatever is running under it breaks. This gives you the full list, including NT SERVICE\ virtual accounts that products like SQL Server and Entra Connect install automatically. Those resolve to a unique SID per server, so the UseSID column captures that on each machine they're found on.
+Uses PSExec rather than WinRM so remoting configuration on target servers isn't a requirement.
 
-Two scenarios come up constantly in enterprise environments.
+Requirements
 
-The first is pre-GPO rollout. You're about to push a "Log on as a service" or "Log on as a batch job" User Rights Assignment policy and you need to know every account that has to be in it before it goes out — not after something breaks. Without a full inventory you're guessing, and GPO will wipe whatever was already on each server the moment it applies.
+PsExec.exe or PsExec64.exe — auto-detected from common locations or pass it with -PSExecPath. Download from Sysinternals.
+Local admin on each target server
+PowerShell 3.0+ on the machine running the script
 
-The second is inherited environments. Not every server was built to spec. Over the years people configure services, scheduled tasks, and app pools to run under personal or shared domain accounts because it was the path of least resistance at the time. Before you can clean that up or migrate to managed service accounts, you need to know what's out there and where it is.
 
-This script gives you that list across your entire server inventory in one shot.
-
-WinRM and PowerShell Remoting also aren't always an option in older or locked-down environments. This uses PSExec so you're not fighting firewall rules or remoting configuration on every target server.
-
----
-
-## What it checks
-
-| Type | Where it appears |
-|---|---|
-| **Service** | services.msc / Win32_Service |
-| **ScheduledTask** | Task Scheduler — root level only |
-| **IISAppPool** | IIS Manager → Application Pools |
-| **COMPlusApp** | Component Services (dcomcnfg) |
-
-Anything running as `LocalSystem`, `NT AUTHORITY\*`, `NT SERVICE\*`, `NETWORK SERVICE`, `LOCAL SERVICE`, or `IIS APPPOOL\*` is filtered out. You won't see it. User-session auto-tasks (OneDrive, MicrosoftEdgeUpdateTaskUser, SID-stamped tasks, GUID tasks) are also excluded — those aren't what you're looking for.
-
----
-
-## Requirements
-
-- **PsExec.exe or PsExec64.exe** from [Sysinternals](https://learn.microsoft.com/en-us/sysinternals/downloads/psexec) — the script auto-detects it from common locations. If it isn't found you'll be prompted for the path. You can also pass it explicitly with `-PSExecPath`.
-- Local admin rights on each target server
-- PowerShell 3.0+ on the machine you're running this from (targets can be PS 3.0+)
-- No modules required on target servers
-
----
-
-## Usage
-
-```powershell
-# Basic — file picker dialogs will open for the server list and output path
+Usage
+powershell# File picker dialogs open for server list and output path if not supplied
 .\Get-ServiceAccountAudit.ps1
 
-# Specify everything upfront — no dialogs
+# No dialogs
 .\Get-ServiceAccountAudit.ps1 -ServerListPath C:\Servers.txt -OutputCsv C:\Audit\Results.csv
 
-# Point to a specific PSExec location
+# Specific PSExec path
 .\Get-ServiceAccountAudit.ps1 -PSExecPath "D:\Tools\PsExec64.exe" -ServerListPath C:\Servers.txt
 
-# Run more sessions at once if your network can handle it
+# More concurrent sessions
 .\Get-ServiceAccountAudit.ps1 -ServerListPath C:\Servers.txt -ThrottleLimit 10
 
-# Use alternate credentials for PSExec and admin share access
+# Alternate credentials
 .\Get-ServiceAccountAudit.ps1 -ServerListPath C:\Servers.txt -Credential (Get-Credential)
-```
+Server list is a plain .txt file, one name per line.
 
-Server list is a plain .txt file, one server name per line. If you don't pass `-ServerListPath` or `-OutputCsv` a file picker dialog will open for each.
+Output
+ServerTypeObjectNameDetailsAccountUseSIDSRV-APP01ServiceSQL Server (MSSQLSERVER)MSSQLSERVER [NT SERVICE virtual account — local to this server, no password]NT SERVICE\MSSQLSERVERS-1-5-80-3880718306-...SRV-APP01ServiceMicrosoft Entra Connect SyncADSyncNT SERVICE\ADSyncS-1-5-80-1544895418-...SRV-APP01ServiceBackup Exec AgentBEAgentDOMAIN\svc_backupSRV-WEB01IISAppPoolIntranetAppPoolDOMAIN\svc_intranetSRV-WEB01ScheduledTaskNightlyReport\DOMAIN\svc_reportsSRV-DC02WarningServer not reachablePort 445 (SMB) did not respondUNKNOWNSRV-SQL01CleanNo custom accounts foundServer was reached and returned no resultsN/A
+UseSID is populated for NT SERVICE\ virtual accounts and local user accounts. Domain accounts and gMSAs are left blank — those can be referenced by name in GPO. Every server gets at least one row. Warning rows are worth following up on.
 
----
+Parameters
+ParameterDefaultDescription-PSExecPathAuto-detectedPath to PsExec.exe or PsExec64.exe-ServerListPathFile picker dialogPath to .txt file with server names-OutputCsvSave dialog (timestamped filename)Output file path-ThrottleLimit5Max concurrent PSExec sessions-CredentialCurrent userAlternate credentials for PSExec and admin share access
 
-## Output
-
-CSV with five columns:
-
-| Column | Description |
-|---|---|
-| Server | Server name |
-| Type | Service / ScheduledTask / IISAppPool / COMPlusApp / Warning / Clean |
-| Name | Name of the service, task, pool, or app |
-| Details | Display name, task folder path, or context |
-| Account | The logon account |
-
-Every server gets at least one row. `Clean` means it was reached and nothing came back. `Warning` means PSExec couldn't connect or IIS is running but the WebAdministration module isn't installed — both worth following up on.
-
----
-
-## How it works
-
-Before launching any PSExec session the script tests port 445 (SMB) on each server with a 2 second timeout. Servers that don't respond get a `Warning` row in the CSV immediately and never consume a PSExec slot. This is more reliable than ping since many servers block ICMP but SMB has to be open for PSExec to work anyway.
-
-For servers that pass the connectivity check, the script builds a per-server encoded PowerShell command and launches it via PSExec using background jobs. Results are written to `C:\Windows\Temp\PSExecAudit_<servername>.txt` on each remote server, then read back over the admin share (`\\server\C$\...`) once the job completes. The temp files are deleted after collection.
-
-This approach sidesteps PSExec's stdout buffering, which silently drops output lines when more than one result comes back through the pipe.
-
----
-
-## Parameters
-
-| Parameter | Default | Description |
-|---|---|---|
-| `-PSExecPath` | Auto-detected | Path to PsExec.exe or PsExec64.exe |
-| `-ServerListPath` | File picker dialog | Path to .txt file with server names |
-| `-OutputCsv` | Save dialog (timestamped filename) | Output file path |
-| `-ThrottleLimit` | `5` | Max concurrent PSExec sessions |
-| `-Credential` | Current user | Alternate credentials for PSExec and admin share access |
-
----
-
-## Notes
-
-- Read-only. Nothing is changed on any server.
-- The script does not require WinRM or PowerShell Remoting to be configured on targets.
-- Port 445 is tested before each PSExec session. Unreachable servers get a `Warning` row and are skipped — no timeout waiting on PSExec.
-- IIS app pool check requires the `WebAdministration` module on the target. If IIS is running but the module isn't installed, the server gets a `Warning` row so you know to check it manually.
-- Scheduled tasks are checked at the root `\` path only. Nested Microsoft tasks are ignored.
-- A summary is printed at the end showing total servers, how many were scanned, and how many were unreachable.
-
----
+How it works
+Port 445 is tested on each server before any PSExec session launches. Unreachable servers get a Warning row immediately and never consume a slot. For servers that respond, the script encodes a PowerShell command and runs it remotely via PSExec as a background job. Results are written to C:\Windows\Temp\PSExecAudit_<servername>.txt on the remote machine and read back over the admin share once the job finishes. Temp files are cleaned up after collection.
+The file-based approach avoids PSExec's stdout buffering issue, which silently drops lines when more than one result comes back through the pipe.
 
 ## License
 
