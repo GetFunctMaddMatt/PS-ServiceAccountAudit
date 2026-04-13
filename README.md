@@ -6,8 +6,6 @@
 
 Audits service logon accounts across your Windows server estate and exports the results to CSV.
 
-[![Download](https://img.shields.io/badge/Download-Get--ServiceAccountAudit.ps1-blue?style=for-the-badge&logo=powershell)](https://raw.githubusercontent.com/GetFunctMaddMatt/PS-ServiceAccountAudit/main/Get-ServiceAccountAudit.ps1)
-
 Covers services, scheduled tasks, IIS application pools, and COM+ applications. Useful before rolling out a User Rights Assignment GPO — if an account isn't in the policy when it applies, whatever is running under it breaks. This gives you the full list, including `NT SERVICE\` virtual accounts that products like SQL Server and Entra Connect install automatically. Those resolve to a unique SID per server, so the `UseSID` column captures that on each machine they're found on.
 
 Uses PSExec rather than WinRM so remoting configuration on target servers isn't a requirement.
