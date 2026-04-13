@@ -83,7 +83,6 @@ The file-based approach avoids PSExec's stdout buffering issue, which silently d
 
 ## Notes
 
-- Read-only. Nothing is changed on any server.
 - `NT SERVICE\` virtual accounts are included in results. Built-in OS accounts (`NT AUTHORITY\*`, `LocalSystem`, `NETWORK SERVICE`, `LOCAL SERVICE`, `IIS APPPOOL\*`) are filtered out.
 - IIS app pool check requires `WebAdministration` on the target. If IIS is running but the module is missing, the server gets a `Warning` row.
 - Scheduled tasks are audited at the root `\` path only. Auto-created user session tasks are excluded.
