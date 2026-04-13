@@ -1,4 +1,3 @@
-#Requires -Version 3.0
 <#
 .SYNOPSIS
     Audits custom service logon accounts across servers via parallel PSExec sessions.
@@ -30,7 +29,7 @@
 .NOTES
     Permissions : Local admin required on each target server.
     Read-only   : This script makes no changes. No backups required.
-    Columns     : Server, Type, Name, Details, Account
+    Columns     : Server, Type, ObjectName, Details, Account, UseSID
 #>
 
 param(
@@ -196,7 +195,7 @@ $remoteScriptTemplate = @'
 $skipPatterns = @(
     'LocalSystem','SYSTEM','LocalService','NetworkService','NETWORK SERVICE','NETWORK_SERVICE',
     'LOCAL SERVICE','LOCAL_SERVICE','Interactive User','Run As User','N/A',
-    'NT AUTHORITY\*','NT SERVICE\*','IIS APPPOOL\*','NT\*'
+    'NT AUTHORITY\*','IIS APPPOOL\*'
 )
 $skipTaskPattern = 'S-1-5-\d+-\d+-\d+-\d+-\d+|\{[0-9A-Fa-f\-]{36}\}|^User_Feed_Synchronization|^OneDrive|^MicrosoftEdgeUpdateTaskUser'
 
@@ -209,6 +208,17 @@ function Test-BuiltInAccount {
     return $false
 }
 
+function Get-LocalAccountSID {
+    param([string]$Account)
+    if (-not ($Account -like 'NT SERVICE\*') -and
+        -not ($Account -like "$env:COMPUTERNAME\*") -and
+        -not ($Account -match '^(\.\\|localhost\\)')) { return '' }
+    try {
+        (New-Object System.Security.Principal.NTAccount($Account)).Translate(
+            [System.Security.Principal.SecurityIdentifier]).Value
+    } catch { '' }
+}
+
 $out = [System.Collections.Generic.List[string]]::new()
 
 # Windows Services
@@ -217,7 +227,7 @@ try {
         $_.StartName -and -not (Test-BuiltInAccount -Account $_.StartName)
     })
     foreach ($svc in $svcs) {
-        $out.Add("##|SVC|$($svc.Name)|$($svc.DisplayName)|$($svc.StartName)")
+        $out.Add("##|SVC|$($svc.DisplayName)|$($svc.Name)|$($svc.StartName)|$(Get-LocalAccountSID $svc.StartName)")
     }
 } catch {}
 
@@ -233,7 +243,7 @@ try {
         })
         foreach ($task in $tasks) {
             $path = $task.TaskPath.TrimEnd('\')
-            $out.Add("##|TASK|$($task.TaskName)|$path|$($task.Principal.UserId)")
+            $out.Add("##|TASK|$($task.TaskName)|$path|$($task.Principal.UserId)|$(Get-LocalAccountSID $task.Principal.UserId)")
         }
     } else {
         $raw = @(schtasks /query /fo CSV /v 2>&1 | Where-Object { $_ -match '\S' })
@@ -246,7 +256,7 @@ try {
                 -not (Test-BuiltInAccount -Account $_.'Run As User')
             })
             foreach ($t in $parsed) {
-                $out.Add("##|TASK|$($t.'TaskName')|$($t.'Status')|$($t.'Run As User')")
+                $out.Add("##|TASK|$($t.'TaskName')|$($t.'Status')|$($t.'Run As User')|$(Get-LocalAccountSID $t.'Run As User')")
             }
         }
     }
@@ -263,10 +273,10 @@ try {
                 -not (Test-BuiltInAccount -Account $_.processModel.userName)
             })
             foreach ($pool in $pools) {
-                $out.Add("##|IIS|$($pool.Name)|AppPool|$($pool.processModel.userName)")
+                $out.Add("##|IIS|$($pool.Name)|AppPool|$($pool.processModel.userName)|$(Get-LocalAccountSID $pool.processModel.userName)")
             }
         } else {
-            $out.Add('##|WARN|WebAdministration module not installed|IIS is running - check App Pools manually in IIS Manager|UNKNOWN')
+            $out.Add('##|WARN|WebAdministration module not installed|IIS is running - check App Pools manually in IIS Manager|UNKNOWN|')
         }
     }
 } catch {}
@@ -280,7 +290,7 @@ try {
         $app      = $apps.Item($i)
         $identity = $app.Value('Identity')
         if (-not (Test-BuiltInAccount -Account $identity)) {
-            $out.Add("##|COM|$($app.Value('Name'))|COMPlusApp|$identity")
+            $out.Add("##|COM|$($app.Value('Name'))|COMPlusApp|$identity|$(Get-LocalAccountSID $identity)")
         }
     }
 } catch {}
@@ -306,11 +316,13 @@ foreach ($server in $servers) {
     # Test port 445 (SMB) before spending a PSExec timeout slot
     $reachable = $false
     try {
-        $tcpTest   = New-Object System.Net.Sockets.TcpClient
-        $connect   = $tcpTest.BeginConnect($server, 445, $null, $null)
-        $wait      = $connect.AsyncWaitHandle.WaitOne(2000, $false)
-        if ($wait -and -not $tcpTest.Client.Connected) { $wait = $false }
-        $reachable = $wait
+        $tcpTest = New-Object System.Net.Sockets.TcpClient
+        $connect = $tcpTest.BeginConnect($server, 445, $null, $null)
+        $wait    = $connect.AsyncWaitHandle.WaitOne(2000, $false)
+        if ($wait) {
+            $tcpTest.EndConnect($connect)
+            $reachable = $true
+        }
         $tcpTest.Close()
     } catch {
         $reachable = $false
@@ -372,9 +384,10 @@ foreach ($srv in $skipped) {
     $results.Add([PSCustomObject]@{
         Server  = $srv
         Type    = 'Warning'
-        Name    = 'Server not reachable'
+        ObjectName = 'Server not reachable'
         Details = 'Port 445 (SMB) did not respond — server may be offline or firewalled'
         Account = 'UNKNOWN'
+        UseSID     = ''
     })
 }
 
@@ -390,9 +403,10 @@ foreach ($srv in $jobMap.Keys) {
         $results.Add([PSCustomObject]@{
             Server  = $srv
             Type    = 'Warning'
-            Name    = 'No output file found'
+            ObjectName = 'No output file found'
             Details = 'PSExec may have failed or timed out'
             Account = 'UNKNOWN'
+            UseSID     = ''
         })
         continue
     }
@@ -405,18 +419,18 @@ foreach ($srv in $jobMap.Keys) {
         $results.Add([PSCustomObject]@{
             Server  = $srv
             Type    = 'Clean'
-            Name    = 'No custom accounts found'
+            ObjectName = 'No custom accounts found'
             Details = 'Server was reached and returned no results'
             Account = 'N/A'
+            UseSID     = ''
         })
         continue
     }
 
-    foreach ($line in $lines) {
-        if (-not $line -or -not $line.StartsWith('##|')) { continue }
 
-        $parts = $line -split '\|', 5
-        if ($parts.Count -ne 5) { continue }
+    foreach ($line in $validLines) {
+        $parts = $line -split '\|', 6
+        if ($parts.Count -lt 6) { continue }
 
         $typeLabel = switch ($parts[1]) {
             'SVC'  { 'Service'       }
@@ -430,9 +444,14 @@ foreach ($srv in $jobMap.Keys) {
         $results.Add([PSCustomObject]@{
             Server  = $srv
             Type    = $typeLabel
-            Name    = $parts[2].Trim()
-            Details = $parts[3].Trim()
+            ObjectName = $parts[2].Trim()
+            Details = if ($parts[4].Trim() -like 'NT SERVICE\*') {
+                        "$($parts[3].Trim()) [NT SERVICE virtual account — local to this server, no password]"
+                    } else {
+                        $parts[3].Trim()
+                    }
             Account = $parts[4].Trim()
+            UseSID     = if ($parts.Count -eq 6) { $parts[5].Trim() } else { '' }
         })
     }
 }
@@ -441,7 +460,7 @@ Write-Progress -Activity 'Complete' -Completed
 
 if ($results.Count -gt 0) {
     $results |
-        Sort-Object -Property Server, Type, Name |
+        Sort-Object -Property Server, Type, ObjectName |
         Export-Csv -Path $OutputCsv -NoTypeInformation -Encoding UTF8
 
     Write-Output ''
