@@ -4,7 +4,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows%20Server-lightgrey?logo=windows)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-Audits service logon accounts across your Windows server estate and exports the results to CSV.
+Audits service, Schedualed Task, and IIS Pool logon accounts across your Windows server estate and exports the results to CSV.
 
 Covers services, scheduled tasks, IIS application pools, and COM+ applications. Useful before rolling out a User Rights Assignment GPO — if an account isn't in the policy when it applies, whatever is running under it breaks. This gives you the full list, including `NT SERVICE\` virtual accounts that products like SQL Server and Entra Connect install automatically. Those resolve to a unique SID per server, so the `UseSID` column captures that on each machine they're found on.
 
